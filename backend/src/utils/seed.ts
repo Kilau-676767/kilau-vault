@@ -22,9 +22,9 @@ export async function seedDefaultVault(
   const sampleNotes = [
     {
       id: crypto.randomUUID(),
-      path: '欢迎使用 Web-Obsidian.md',
-      title: '欢迎使用 Web-Obsidian',
-      content: `# 欢迎使用 Web-Obsidian 👋
+      path: '欢迎使用 Kilau Vault.md',
+      title: '欢迎使用 Kilau Vault',
+      content: `# 欢迎使用 Kilau Vault 👋
 
 这是一个基于 **React + CodeMirror 6 + Hono + Cloudflare D1** 构建的 Web 端个人双链知识库系统。
 
@@ -55,7 +55,7 @@ $$e^{i\\pi} + 1 = 0$$
 2. **用自己的话重写**：不要单纯复制粘贴，消化后用自己的语言表达。
 3. **建立连接**：笔记的价值在于连接而非孤立存放。通过 \`[[双链]]\` 将新卡片连接到已有的知识网络中。
 
-可以结合 [[欢迎使用 Web-Obsidian]] 中的指引开始构建你的网络，并用 [[知识图谱与PageRank算法]] 来发现核心知识枢纽。
+可以结合 [[欢迎使用 Kilau Vault]] 中的指引开始构建你的网络，并用 [[知识图谱与PageRank算法]] 来发现核心知识枢纽。
 
 #方法论 #知识管理`,
     },
@@ -99,7 +99,7 @@ graph LR
 - **后端**：Hono 轻量级 TypeScript 框架
 - **数据库**：Cloudflare D1 (SQLite) + Drizzle ORM
 
-参见 [[欢迎使用 Web-Obsidian]] 与 [[知识图谱与PageRank算法]]。
+参见 [[欢迎使用 Kilau Vault]] 与 [[知识图谱与PageRank算法]]。
 
 #架构 #Cloudflare`,
     },

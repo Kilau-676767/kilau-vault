@@ -1,6 +1,6 @@
-# Web-Obsidian · 个人双链知识库与图谱系统
+# Kilau Vault · 个人双链知识库与图谱系统
 
-基于 **React + CodeMirror 6 + force-graph + Hono + Cloudflare D1** 构建的 Web 版 Obsidian 毕业设计项目，支持全栈免费部署于 Cloudflare 边缘网络。
+基于 **React + CodeMirror 6 + force-graph + Hono + Cloudflare D1** 构建的 Web 端双链知识库毕业设计项目，支持全栈免费部署于 Cloudflare 边缘网络。
 
 ## 核心功能模块
 1. **账户与多知识库系统**：JWT 鉴权、PBKDF2 密码哈希、多 Vault 切换与创建、新用户自动初始化示例知识库。

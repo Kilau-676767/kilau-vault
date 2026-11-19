@@ -1,9 +1,9 @@
-name = "web-obsidian-backend"
+name = "kilau-vault-backend"
 main = "src/index.ts"
 compatibility_date = "2025-02-14"
 
 [vars]
-JWT_SECRET = "dev-secret-change-in-production-web-obsidian-2026"
+JWT_SECRET = "dev-secret-change-in-production-kilau-vault-2026"
 
 [[d1_databases]]
 binding = "DB"

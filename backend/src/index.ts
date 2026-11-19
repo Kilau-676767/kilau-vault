@@ -19,7 +19,7 @@ app.use(
   })
 );
 
-app.get('/api/health', (c) => c.json({ status: 'ok', service: 'web-obsidian-api' }));
+app.get('/api/health', (c) => c.json({ status: 'ok', service: 'kilau-vault-api' }));
 
 app.route('/api/auth', authRoutes);
 app.route('/api/vaults', vaultRoutes);
