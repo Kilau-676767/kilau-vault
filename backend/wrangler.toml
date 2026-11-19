@@ -1,0 +1,12 @@
+name = "web-obsidian-backend"
+main = "src/index.ts"
+compatibility_date = "2025-02-14"
+
+[vars]
+JWT_SECRET = "dev-secret-change-in-production-web-obsidian-2026"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "web_obsidian_db"
+database_id = "local-dev-db-id"
+migrations_dir = "migrations"

@@ -1,0 +1,256 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+
+@layer base {
+  :root {
+    --serif: "Iowan Old Style", "Baskerville", "Songti SC", "Noto Serif CJK SC", "Times New Roman", serif;
+    --sans: Inter, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+
+    --bg: #0b0d0d;
+    --surface: #111514;
+    --surface-raised: #171c1a;
+    --surface-muted: #1c211f;
+    --fg: #e7ece8;
+    --fg-strong: #f5f7f4;
+    --muted: #939c97;
+    --muted-strong: #b8c0bb;
+    --border: rgba(228, 236, 231, 0.12);
+    --border-strong: rgba(228, 236, 231, 0.23);
+    --accent: #d98a73;
+    --sage: #a6b682;
+    --teal: #78a9a1;
+    --ochre: #c7a769;
+    --violet: #a99bc6;
+    --ring: rgba(217, 138, 115, 0.52);
+    --shadow: 0 22px 70px rgba(0, 0, 0, 0.45);
+  }
+
+  :root[data-theme="light"] {
+    --bg: #f3f1ea;
+    --surface: #ebe9e1;
+    --surface-raised: #f8f6f0;
+    --surface-muted: #e4e2da;
+    --fg: #1b211e;
+    --fg-strong: #101411;
+    --muted: #69716d;
+    --muted-strong: #4f5853;
+    --border: rgba(26, 34, 30, 0.13);
+    --border-strong: rgba(26, 34, 30, 0.25);
+    --accent: #b75e49;
+    --sage: #697b50;
+    --teal: #477a72;
+    --ochre: #987a3d;
+    --violet: #705f91;
+    --ring: rgba(183, 94, 73, 0.42);
+    --shadow: 0 22px 70px rgba(31, 35, 32, 0.12);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    transition: background-color 0.22s ease, color 0.22s ease;
+  }
+
+  body::selection {
+    background: color-mix(in srgb, var(--accent) 45%, transparent);
+    color: var(--fg-strong);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+}
+
+.font-serif-display {
+  font-family: var(--serif);
+}
+
+/* Kilau-inspired Markdown Preview Styling */
+.markdown-preview {
+  color: var(--fg);
+  line-height: 1.85;
+  font-size: 15.5px;
+}
+
+.markdown-preview h1 {
+  font-family: var(--serif);
+  font-size: 1.95rem;
+  font-weight: 700;
+  color: var(--fg-strong);
+  margin-top: 1.25rem;
+  margin-bottom: 0.9rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.45rem;
+  letter-spacing: -0.01em;
+}
+
+.markdown-preview h2 {
+  font-family: var(--serif);
+  font-size: 1.42rem;
+  font-weight: 600;
+  color: var(--fg-strong);
+  margin-top: 1.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.markdown-preview h3 {
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--fg-strong);
+  margin-top: 1.25rem;
+  margin-bottom: 0.45rem;
+}
+
+.markdown-preview p {
+  margin-bottom: 0.95rem;
+}
+
+.markdown-preview ul,
+.markdown-preview ol {
+  margin-left: 1.5rem;
+  margin-bottom: 0.9rem;
+}
+
+.markdown-preview ul {
+  list-style-type: disc;
+}
+
+.markdown-preview ol {
+  list-style-type: decimal;
+}
+
+.markdown-preview blockquote {
+  border-left: 2.5px solid var(--accent);
+  padding: 0.5rem 1rem;
+  color: var(--muted-strong);
+  background: color-mix(in srgb, var(--surface-raised) 70%, transparent);
+  border-radius: 0 8px 8px 0;
+  margin: 1rem 0;
+  font-family: var(--serif);
+}
+
+.markdown-preview code {
+  background: var(--surface-muted);
+  color: var(--accent);
+  padding: 0.15rem 0.4rem;
+  border-radius: 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.87em;
+}
+
+.markdown-preview pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 1rem 1.15rem;
+  border-radius: 10px;
+  overflow-x: auto;
+  margin: 1.1rem 0;
+}
+
+.markdown-preview pre code {
+  background: transparent;
+  color: var(--fg);
+  padding: 0;
+}
+
+/* Pushpin-styled Wikilink Pill */
+.markdown-preview a.wikilink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px 1px 6px;
+  margin: 0 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  color: var(--accent);
+  font-size: 0.92em;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  vertical-align: baseline;
+}
+
+.markdown-preview a.wikilink:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: var(--accent);
+  color: var(--fg-strong);
+  transform: translateY(-0.5px);
+}
+
+.markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.1rem 0;
+}
+
+.markdown-preview th,
+.markdown-preview td {
+  border: 1px solid var(--border);
+  padding: 0.55rem 0.8rem;
+  text-align: left;
+}
+
+.markdown-preview th {
+  background: var(--surface-muted);
+}
+
+/* CodeMirror theme integration */
+.cm-editor {
+  height: 100%;
+  font-size: 15px;
+  background-color: var(--bg) !important;
+  color: var(--fg) !important;
+}
+
+.cm-gutters {
+  background-color: var(--bg) !important;
+  border-right: 1px solid var(--border) !important;
+  color: var(--muted) !important;
+}
+
+.cm-scroller {
+  font-family: var(--sans);
+  line-height: 1.8;
+  padding: 20px 28px;
+}
+
+/* Instant Kilau-themed Tooltip */
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-2px);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  color: var(--fg-strong);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 999;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+}
+
+[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+[data-tip-pos="top"]::after {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
