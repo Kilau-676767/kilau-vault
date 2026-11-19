@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import JSZip from 'jszip';
 import {
   BarChart3,
+  Bookmark,
   Calendar,
   Columns2,
   Download,
@@ -17,10 +18,12 @@ import {
   Route,
   Search,
   Share2,
+  Sparkles,
   Sun,
   X,
 } from 'lucide-react';
 import { useAppStore } from './stores/useAppStore';
+import { notesApi } from './api/client';
 import { AuthScreen } from './components/AuthScreen';
 import { FileTree } from './components/FileTree';
 import { CodeMirrorEditor } from './components/CodeMirrorEditor';
@@ -32,6 +35,8 @@ import { CommandPalette } from './components/CommandPalette';
 import { ShareModal } from './components/ShareModal';
 import { PublicShareView } from './components/PublicShareView';
 import { UserProfileModal } from './components/UserProfileModal';
+import { BookmarksView } from './components/BookmarksView';
+import { AiPanel } from './components/AiPanel';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { useT } from './stores/useI18nStore';
 
@@ -66,6 +71,7 @@ const WorkspaceApp: React.FC = () => {
     closeTab,
     createNote,
     updateNoteContent,
+    toggleBookmark,
     setCommandPaletteOpen,
     saving,
   } = useAppStore();
@@ -74,6 +80,7 @@ const WorkspaceApp: React.FC = () => {
   const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
     document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'
   );
@@ -103,6 +110,11 @@ const WorkspaceApp: React.FC = () => {
     [notes]
   );
 
+  const bookmarkedNotes = useMemo(
+    () => notes.filter((n) => !n.isFolder && n.isStarred),
+    [notes]
+  );
+
   const handleEditorChange = (newContent: string) => {
     if (!activeNote) return;
     if (saveTimerRef.current) {
@@ -129,11 +141,11 @@ const WorkspaceApp: React.FC = () => {
   };
 
   const handleExportZip = async () => {
+    if (!currentVaultId) return;
+    const { files } = await notesApi.exportVault(currentVaultId);
     const zip = new JSZip();
-    for (const n of notes) {
-      if (!n.isFolder) {
-        zip.file(n.path, n.content);
-      }
+    for (const f of files) {
+      zip.file(f.path, f.content);
     }
     const blob = await zip.generateAsync({ type: 'blob' });
     const url = URL.createObjectURL(blob);
@@ -162,11 +174,11 @@ const WorkspaceApp: React.FC = () => {
       {/* Kilau-style Top Navigation Bar */}
       <header className="h-14 bg-[var(--surface)]/90 backdrop-blur-md border-b border-[var(--border)] px-4 flex items-center justify-between shrink-0 z-30">
         {/* Left: Brand Mark + Primary Nav Links */}
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4 min-w-0">
           <button
             type="button"
             onClick={() => setActiveView('editor')}
-            className="group flex items-center gap-2.5 cursor-pointer"
+            className="group flex items-center gap-2 cursor-pointer shrink-0 whitespace-nowrap"
           >
             <span className="w-8 h-8 rounded-full border border-[var(--border-strong)] group-hover:border-[var(--accent)] flex items-center justify-center text-[var(--accent)] transition-transform duration-200 group-hover:-rotate-12">
               <Route className="w-4 h-4" />
@@ -176,11 +188,11 @@ const WorkspaceApp: React.FC = () => {
             </span>
           </button>
 
-          <nav className="hidden md:flex items-center gap-1">
+          <nav className="hidden md:flex items-center gap-0.5 shrink-0">
             <button
               type="button"
               onClick={() => setActiveView('editor')}
-              className={`relative h-9 px-3 rounded-full text-[13px] font-medium flex items-center gap-1.5 transition cursor-pointer ${
+              className={`relative h-9 px-2.5 rounded-full text-[13px] font-medium flex items-center gap-1.5 whitespace-nowrap transition cursor-pointer ${
                 activeView === 'editor'
                   ? 'text-[var(--fg-strong)] bg-[var(--surface-raised)]'
                   : 'text-[var(--muted)] hover:text-[var(--fg-strong)] hover:bg-[var(--surface-raised)]/60'
@@ -196,7 +208,7 @@ const WorkspaceApp: React.FC = () => {
             <button
               type="button"
               onClick={() => setActiveView('graph')}
-              className={`relative h-9 px-3 rounded-full text-[13px] font-medium flex items-center gap-1.5 transition cursor-pointer ${
+              className={`relative h-9 px-2.5 rounded-full text-[13px] font-medium flex items-center gap-1.5 whitespace-nowrap transition cursor-pointer ${
                 activeView === 'graph'
                   ? 'text-[var(--fg-strong)] bg-[var(--surface-raised)]'
                   : 'text-[var(--muted)] hover:text-[var(--fg-strong)] hover:bg-[var(--surface-raised)]/60'
@@ -212,7 +224,7 @@ const WorkspaceApp: React.FC = () => {
             <button
               type="button"
               onClick={() => setActiveView('dashboard')}
-              className={`relative h-9 px-3 rounded-full text-[13px] font-medium flex items-center gap-1.5 transition cursor-pointer ${
+              className={`relative h-9 px-2.5 rounded-full text-[13px] font-medium flex items-center gap-1.5 whitespace-nowrap transition cursor-pointer ${
                 activeView === 'dashboard'
                   ? 'text-[var(--fg-strong)] bg-[var(--surface-raised)]'
                   : 'text-[var(--muted)] hover:text-[var(--fg-strong)] hover:bg-[var(--surface-raised)]/60'
@@ -227,8 +239,32 @@ const WorkspaceApp: React.FC = () => {
 
             <button
               type="button"
+              onClick={() => setActiveView('bookmarks')}
+              className={`relative h-9 px-2.5 rounded-full text-[13px] font-medium flex items-center gap-1.5 whitespace-nowrap transition cursor-pointer ${
+                activeView === 'bookmarks'
+                  ? 'text-[var(--fg-strong)] bg-[var(--surface-raised)]'
+                  : 'text-[var(--muted)] hover:text-[var(--fg-strong)] hover:bg-[var(--surface-raised)]/60'
+              }`}
+            >
+              <Bookmark
+                className="w-3.5 h-3.5 text-[var(--ochre)]"
+                fill={bookmarkedNotes.length > 0 ? 'currentColor' : 'none'}
+              />
+              书签
+              {bookmarkedNotes.length > 0 && (
+                <span className="text-[10px] px-1.5 rounded-full bg-[var(--ochre)]/15 text-[var(--ochre)] font-semibold">
+                  {bookmarkedNotes.length}
+                </span>
+              )}
+              {activeView === 'bookmarks' && (
+                <span className="absolute bottom-0.5 left-3 right-3 h-[1.5px] bg-[var(--accent)] rounded-full" />
+              )}
+            </button>
+
+            <button
+              type="button"
               onClick={() => void handleDailyNote()}
-              className="h-9 px-3 rounded-full text-[13px] font-medium text-[var(--muted)] hover:text-[var(--fg-strong)] hover:bg-[var(--surface-raised)]/60 flex items-center gap-1.5 transition cursor-pointer"
+              className="h-9 px-2.5 rounded-full text-[13px] font-medium text-[var(--muted)] hover:text-[var(--fg-strong)] hover:bg-[var(--surface-raised)]/60 flex items-center gap-1.5 whitespace-nowrap transition cursor-pointer"
             >
               <Calendar className="w-3.5 h-3.5" />
               {t.navDaily}
@@ -236,8 +272,22 @@ const WorkspaceApp: React.FC = () => {
           </nav>
         </div>
 
-        {/* Right: Search, Language, Theme, Export, User Profile, Logout */}
-        <div className="flex items-center gap-2">
+        {/* Right: AI Panel, Search, Language, Theme, Export, User Profile, Logout */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            data-tip="对话自己 · 基于知识库语料"
+            onClick={() => setAiPanelOpen((v) => !v)}
+            className={`h-9 px-3 rounded-lg border text-xs flex items-center gap-1.5 transition cursor-pointer ${
+              aiPanelOpen
+                ? 'border-[var(--accent)] bg-[var(--accent)]/15 text-[var(--accent)] font-medium'
+                : 'border-[var(--border)] bg-[var(--bg)]/70 hover:border-[var(--border-strong)] text-[var(--fg)]'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-[var(--accent)]" />
+            <span className="hidden sm:inline">对话自己</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setCommandPaletteOpen(true)}
@@ -277,10 +327,18 @@ const WorkspaceApp: React.FC = () => {
             className="h-9 pl-1.5 pr-3 rounded-lg border border-[var(--border)] bg-[var(--bg)]/70 hover:border-[var(--border-strong)] hover:bg-[var(--surface-raised)] flex items-center gap-2 transition cursor-pointer"
           >
             <span
-              style={{ backgroundColor: user.avatar || '#d98a73' }}
-              className="w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold text-white"
+              style={
+                !(user.avatar?.startsWith('data:image/') || user.avatar?.startsWith('http'))
+                  ? { backgroundColor: user.avatar || '#d98a73' }
+                  : undefined
+              }
+              className="w-6 h-6 rounded-full overflow-hidden flex items-center justify-center text-[11px] font-bold text-white shrink-0"
             >
-              {user.username.slice(0, 1).toUpperCase()}
+              {user.avatar?.startsWith('data:image/') || user.avatar?.startsWith('http') ? (
+                <img src={user.avatar} alt={user.username} className="w-full h-full object-cover" />
+              ) : (
+                user.username.slice(0, 1).toUpperCase()
+              )}
             </span>
             <span className="hidden sm:inline text-xs font-medium text-[var(--fg-strong)] max-w-[90px] truncate">
               {user.username}
@@ -346,6 +404,7 @@ const WorkspaceApp: React.FC = () => {
         <main className="flex-1 flex flex-col min-w-0 bg-[var(--bg)]">
           {activeView === 'graph' && <GraphView />}
           {activeView === 'dashboard' && <DashboardView />}
+          {activeView === 'bookmarks' && <BookmarksView />}
 
           {activeView === 'editor' && (
             <>
@@ -441,6 +500,22 @@ const WorkspaceApp: React.FC = () => {
 
                     <button
                       type="button"
+                      data-tip={activeNote.isStarred ? '取消书签收藏' : '加入书签收藏'}
+                      onClick={() => void toggleBookmark(activeNote.id)}
+                      className={`p-1.5 rounded-lg cursor-pointer transition ${
+                        activeNote.isStarred
+                          ? 'text-[var(--ochre)] bg-[var(--ochre)]/15'
+                          : 'text-[var(--muted)] hover:text-[var(--ochre)] hover:bg-[var(--surface-raised)]'
+                      }`}
+                    >
+                      <Bookmark
+                        className="w-4 h-4"
+                        fill={activeNote.isStarred ? 'currentColor' : 'none'}
+                      />
+                    </button>
+
+                    <button
+                      type="button"
                       data-tip={t.shareNote}
                       onClick={() => setShareModalOpen(true)}
                       className="p-1.5 text-[var(--muted)] hover:text-[var(--fg-strong)] hover:bg-[var(--surface-raised)] rounded-lg cursor-pointer"
@@ -466,35 +541,41 @@ const WorkspaceApp: React.FC = () => {
 
               {/* Editor & Preview Body */}
               {activeNote ? (
-                <div className="flex-1 flex overflow-hidden">
-                  {(editorMode === 'edit' || editorMode === 'split') && (
-                    <div
-                      className={`h-full overflow-hidden ${
-                        editorMode === 'split' ? 'w-1/2 border-r border-[var(--border)]' : 'w-full'
-                      }`}
-                    >
-                      <CodeMirrorEditor
-                        noteId={activeNote.id}
-                        initialContent={activeNote.content}
-                        noteTitles={noteTitles}
-                        onChange={handleEditorChange}
-                      />
-                    </div>
-                  )}
+                activeNote.content === undefined ? (
+                  <div className="flex-1 flex items-center justify-center text-xs text-[var(--muted)]">
+                    {t.loading}
+                  </div>
+                ) : (
+                  <div className="flex-1 flex overflow-hidden">
+                    {(editorMode === 'edit' || editorMode === 'split') && (
+                      <div
+                        className={`h-full overflow-hidden ${
+                          editorMode === 'split' ? 'w-1/2 border-r border-[var(--border)]' : 'w-full'
+                        }`}
+                      >
+                        <CodeMirrorEditor
+                          noteId={activeNote.id}
+                          initialContent={activeNote.content}
+                          noteTitles={noteTitles}
+                          onChange={handleEditorChange}
+                        />
+                      </div>
+                    )}
 
-                  {(editorMode === 'preview' || editorMode === 'split') && (
-                    <div
-                      className={`h-full overflow-y-auto px-8 py-6 bg-[var(--bg)] ${
-                        editorMode === 'split' ? 'w-1/2' : 'w-full max-w-4xl mx-auto'
-                      }`}
-                    >
-                      <MarkdownPreview
-                        content={activeNote.content}
-                        onWikilinkClick={(title) => void openNoteByTitle(title)}
-                      />
-                    </div>
-                  )}
-                </div>
+                    {(editorMode === 'preview' || editorMode === 'split') && (
+                      <div
+                        className={`h-full overflow-y-auto px-8 py-6 bg-[var(--bg)] ${
+                          editorMode === 'split' ? 'w-1/2' : 'w-full max-w-4xl mx-auto'
+                        }`}
+                      >
+                        <MarkdownPreview
+                          content={activeNote.content}
+                          onWikilinkClick={(title) => void openNoteByTitle(title)}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-[var(--muted)] gap-3">
                   <p className="font-serif-display text-base">{t.noOpenNote}</p>
@@ -521,11 +602,14 @@ const WorkspaceApp: React.FC = () => {
         </main>
 
         {/* Right Sidebar (Backlinks & Outline) */}
-        {activeView === 'editor' && rightSidebarOpen && (
+        {activeView === 'editor' && rightSidebarOpen && !aiPanelOpen && (
           <aside className="w-72 bg-[var(--surface)] border-l border-[var(--border)] shrink-0 overflow-hidden">
             <BacklinksPanel />
           </aside>
         )}
+
+        {/* AI RAG Panel */}
+        {aiPanelOpen && <AiPanel onClose={() => setAiPanelOpen(false)} />}
       </div>
 
       {/* Command Palette */}

@@ -30,12 +30,24 @@ export interface Note {
   vaultId: string;
   path: string;
   title: string;
-  content: string;
+  content?: string;
+  excerpt?: string;
   tags: string; // JSON string
   wordCount: number;
   isFolder: boolean;
+  isStarred?: boolean;
+  pageRank?: number;
+  cluster?: number;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface SearchResult {
+  id: string;
+  title: string;
+  path: string;
+  wordCount: number;
+  snippet: string;
 }
 
 export interface BacklinkItem {
@@ -112,4 +124,28 @@ export interface ImportResult {
   importedCount: number;
   updatedCount: number;
   linkCount: number;
+}
+
+export interface AiSource {
+  noteId: string;
+  vaultId: string;
+  vaultName: string;
+  title: string;
+  path: string;
+  score: number;
+}
+
+export interface WebSource {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+export interface AiMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  sources?: AiSource[];
+  sourceLinks?: { source: string; target: string }[];
+  webSources?: WebSource[];
 }

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { authApi, notesApi, vaultsApi } from '../api/client';
 import type { BacklinkItem, ImportResult, Note, User, Vault } from '../types';
 
-export type ActiveView = 'editor' | 'graph' | 'dashboard';
+export type ActiveView = 'editor' | 'graph' | 'dashboard' | 'bookmarks';
 export type EditorMode = 'edit' | 'split' | 'preview';
 
 interface AppState {
@@ -42,6 +42,7 @@ interface AppState {
   updateNoteContent: (noteId: string, content: string) => Promise<void>;
   renameNote: (noteId: string, newPath: string) => Promise<void>;
   deleteNote: (noteId: string) => Promise<void>;
+  toggleBookmark: (noteId: string) => Promise<void>;
   refreshBacklinks: (noteId: string) => Promise<void>;
   restoreNoteRevision: (noteId: string, revisionId: string) => Promise<void>;
   batchImportNotes: (files: { path: string; content: string }[]) => Promise<ImportResult | null>;
@@ -258,12 +259,32 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  toggleBookmark: async (noteId) => {
+    const target = get().notes.find((n) => n.id === noteId);
+    if (!target || target.isFolder) return;
+    const nextStarred = !target.isStarred;
+    set((s) => ({
+      notes: s.notes.map((n) => (n.id === noteId ? { ...n, isStarred: nextStarred } : n)),
+    }));
+    try {
+      const { note } = await notesApi.toggleBookmark(noteId, nextStarred);
+      set((s) => ({
+        notes: s.notes.map((n) => (n.id === noteId ? note : n)),
+      }));
+    } catch {
+      set((s) => ({
+        notes: s.notes.map((n) => (n.id === noteId ? { ...n, isStarred: !nextStarred } : n)),
+      }));
+    }
+  },
+
   refreshBacklinks: async (noteId) => {
     try {
-      const { backlinks, unlinkedMentions } = await notesApi.getDetail(noteId);
-      if (get().activeNoteId === noteId) {
-        set({ backlinks, unlinkedMentions });
-      }
+      const { note, backlinks, unlinkedMentions } = await notesApi.getDetail(noteId);
+      set((s) => ({
+        notes: s.notes.map((n) => (n.id === noteId ? note : n)),
+        ...(s.activeNoteId === noteId ? { backlinks, unlinkedMentions } : {}),
+      }));
     } catch {
       // ignore transient error
     }

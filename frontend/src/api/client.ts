@@ -1,14 +1,17 @@
 import type {
+  AiSource,
   AnalyticsData,
   BacklinkItem,
   GraphData,
   ImportResult,
   Note,
   NoteRevision,
+  SearchResult,
   ShareItem,
   User,
   UserStats,
   Vault,
+  WebSource,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -94,6 +97,12 @@ export const vaultsApi = {
 export const notesApi = {
   listByVault: (vaultId: string) =>
     request<{ notes: Note[] }>(`/api/notes/vault/${vaultId}`),
+  exportVault: (vaultId: string) =>
+    request<{ files: { path: string; content: string }[] }>(`/api/notes/vault/${vaultId}/export`),
+  search: (vaultId: string, q: string) =>
+    request<{ results: SearchResult[] }>(
+      `/api/notes/vault/${vaultId}/search?q=${encodeURIComponent(q)}`
+    ),
   getDetail: (noteId: string) =>
     request<{
       note: Note;
@@ -112,6 +121,11 @@ export const notesApi = {
     }),
   remove: (noteId: string) =>
     request<{ ok: boolean }>(`/api/notes/${noteId}`, { method: 'DELETE' }),
+  toggleBookmark: (noteId: string, isStarred: boolean) =>
+    request<{ note: Note }>(`/api/notes/${noteId}/bookmark`, {
+      method: 'PATCH',
+      body: JSON.stringify({ isStarred }),
+    }),
   listRevisions: (noteId: string) =>
     request<{ revisions: NoteRevision[] }>(`/api/notes/${noteId}/revisions`),
   createRevision: (noteId: string, label?: string) =>
@@ -160,4 +174,25 @@ export const shareApi = {
       viewCount: number;
     }>(`/api/share/public/${code}${query}`);
   },
+};
+
+export const aiApi = {
+  chat: (payload: {
+    question: string;
+    scope: string;
+    apiKey: string;
+    baseUrl: string;
+    model: string;
+    webSearch?: boolean;
+    tavilyApiKey?: string;
+    history: { role: 'user' | 'assistant'; content: string }[];
+  }) => request<{
+    answer: string;
+    sources: AiSource[];
+    sourceLinks: { source: string; target: string }[];
+    webSources: WebSource[];
+  }>('/api/ai/chat', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
 };

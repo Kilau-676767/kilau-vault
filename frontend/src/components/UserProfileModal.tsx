@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { authApi } from '../api/client';
 import { useAppStore } from '../stores/useAppStore';
 import type { UserStats } from '../types';
 import {
+  Camera,
   Database,
   HardDrive,
   KeyRound,
@@ -18,13 +19,43 @@ interface UserProfileModalProps {
 }
 
 const AVATAR_COLORS = [
-  '#7f6df2',
-  '#38bdf8',
-  '#34d399',
-  '#f59e0b',
-  '#f472b6',
+  '#d98a73',
+  '#a6b682',
+  '#78a9a1',
+  '#c7a769',
+  '#a99bc6',
   '#ef4444',
 ];
+
+function isImageAvatar(val?: string): boolean {
+  if (!val) return false;
+  return val.startsWith('data:image/') || val.startsWith('http://') || val.startsWith('https://');
+}
+
+async function compressImageToDataUrl(file: File, size = 160): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return reject(new Error('Canvas unavailable'));
+        const minSide = Math.min(img.width, img.height);
+        const sx = (img.width - minSide) / 2;
+        const sy = (img.height - minSide) / 2;
+        ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, size, size);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      };
+      img.onerror = () => reject(new Error('图片加载失败'));
+      img.src = String(reader.result);
+    };
+    reader.onerror = () => reject(new Error('读取文件失败'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export const UserProfileModal: React.FC<UserProfileModalProps> = ({ onClose }) => {
   const { user, setUser, logout, vaults, renameVault, deleteVault } = useAppStore();
@@ -36,6 +67,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ onClose }) =
   const [avatar, setAvatar] = useState(user?.avatar || AVATAR_COLORS[0]);
   const [profileMsg, setProfileMsg] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   // Security state
   const [oldPassword, setOldPassword] = useState('');
@@ -53,6 +85,18 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ onClose }) =
   }, [vaults.length]);
 
   if (!user) return null;
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await compressImageToDataUrl(file);
+      setAvatar(dataUrl);
+      setProfileMsg('头像已裁切预览，点击「保存资料」生效');
+    } catch (err) {
+      setProfileMsg(err instanceof Error ? err.message : '头像处理失败');
+    }
+  };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -121,10 +165,14 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ onClose }) =
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#333] bg-[#181818]">
           <div className="flex items-center gap-3">
             <div
-              style={{ backgroundColor: avatar || AVATAR_COLORS[0] }}
-              className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-base shadow"
+              style={!isImageAvatar(avatar) ? { backgroundColor: avatar || AVATAR_COLORS[0] } : undefined}
+              className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center text-white font-bold text-base shadow border border-[var(--border-strong)]"
             >
-              {user.username.slice(0, 1).toUpperCase()}
+              {isImageAvatar(avatar) ? (
+                <img src={avatar} alt={user.username} className="w-full h-full object-cover" />
+              ) : (
+                user.username.slice(0, 1).toUpperCase()
+              )}
             </div>
             <div>
               <h3 className="text-base font-semibold text-white">{user.username}</h3>
@@ -185,20 +233,45 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ onClose }) =
           {tab === 'profile' && (
             <form onSubmit={handleSaveProfile} className="space-y-4">
               <div>
-                <label className="block text-xs text-[#999] mb-2">头像背景色</label>
-                <div className="flex gap-2.5">
-                  {AVATAR_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => setAvatar(c)}
-                      style={{ backgroundColor: c }}
-                      className={`w-7 h-7 rounded-full cursor-pointer transition ${
-                        avatar === c ? 'ring-2 ring-white ring-offset-2 ring-offset-[#1e1e1e]' : ''
-                      }`}
-                    />
-                  ))}
+                <label className="block text-xs text-[#999] mb-2">更换头像（上传图片 / 外链 / 字母背景色）</label>
+                <div className="flex flex-wrap items-center gap-3">
+                  <input
+                    ref={avatarInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => void handleAvatarUpload(e)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => avatarInputRef.current?.click()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#262626] hover:bg-[#333] border border-[#3a3a3a] text-xs text-white cursor-pointer transition"
+                  >
+                    <Camera className="w-3.5 h-3.5 text-[#d98a73]" />
+                    上传本地图片
+                  </button>
+
+                  <div className="flex gap-2">
+                    {AVATAR_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setAvatar(c)}
+                        style={{ backgroundColor: c }}
+                        className={`w-6 h-6 rounded-full cursor-pointer transition ${
+                          avatar === c ? 'ring-2 ring-white ring-offset-2 ring-offset-[#1e1e1e]' : ''
+                        }`}
+                      />
+                    ))}
+                  </div>
                 </div>
+                <input
+                  type="text"
+                  value={isImageAvatar(avatar) && !avatar.startsWith('data:') ? avatar : ''}
+                  onChange={(e) => setAvatar(e.target.value)}
+                  placeholder="或者粘贴图片 URL（如 https://kilau.cn/images/kilau-avatar.jpg）"
+                  className="mt-2.5 w-full bg-[#161616] border border-[#333] rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-[#d98a73]"
+                />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

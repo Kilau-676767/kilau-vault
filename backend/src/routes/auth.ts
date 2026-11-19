@@ -43,7 +43,7 @@ authRoutes.post('/register', async (c) => {
     createdAt: now,
   });
 
-  await seedDefaultVault(db, userId);
+  await seedDefaultVault(db, c.env.DB, userId);
 
   const token = await sign(
     {

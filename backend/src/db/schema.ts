@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, uniqueIndex, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, uniqueIndex, index } from 'drizzle-orm/sqlite-core';
 
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
@@ -34,6 +34,9 @@ export const notes = sqliteTable(
     tags: text('tags').notNull().default('[]'),
     wordCount: integer('word_count').notNull().default(0),
     isFolder: integer('is_folder', { mode: 'boolean' }).notNull().default(false),
+    isStarred: integer('is_starred', { mode: 'boolean' }).notNull().default(false),
+    pageRank: real('page_rank').notNull().default(0),
+    cluster: integer('cluster').notNull().default(0),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },

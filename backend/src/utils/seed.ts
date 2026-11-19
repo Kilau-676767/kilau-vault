@@ -2,7 +2,11 @@ import type { DrizzleD1Database } from 'drizzle-orm/d1';
 import { vaults, notes, noteLinks } from '../db/schema';
 import { parseMarkdownMeta } from './markdown';
 
-export async function seedDefaultVault(db: DrizzleD1Database, userId: string) {
+export async function seedDefaultVault(
+  db: DrizzleD1Database,
+  d1: D1Database,
+  userId: string
+) {
   const now = Date.now();
   const vaultId = crypto.randomUUID();
 
@@ -152,6 +156,10 @@ graph LR
       createdAt: now,
       updatedAt: now,
     });
+    await d1
+      .prepare('INSERT INTO notes_fts (note_id, vault_id, title, content) VALUES (?, ?, ?, ?)')
+      .bind(n.id, vaultId, n.title, n.content)
+      .run();
   }
 
   for (const n of sampleNotes) {

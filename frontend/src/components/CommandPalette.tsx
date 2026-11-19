@@ -1,18 +1,22 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Search, FileText, Plus } from 'lucide-react';
+import { notesApi } from '../api/client';
 import { useAppStore } from '../stores/useAppStore';
 import { useT } from '../stores/useI18nStore';
+import type { SearchResult } from '../types';
 
 export const CommandPalette: React.FC = () => {
   const {
     commandPaletteOpen,
     setCommandPaletteOpen,
+    currentVaultId,
     notes,
     openNote,
     openNoteByTitle,
   } = useAppStore();
   const { t } = useT();
   const [query, setQuery] = useState('');
+  const [ftsResults, setFtsResults] = useState<SearchResult[]>([]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -28,10 +32,29 @@ export const CommandPalette: React.FC = () => {
   }, [commandPaletteOpen, setCommandPaletteOpen]);
 
   useEffect(() => {
-    if (commandPaletteOpen) setQuery('');
+    if (commandPaletteOpen) {
+      setQuery('');
+      setFtsResults([]);
+    }
   }, [commandPaletteOpen]);
 
-  const filtered = useMemo(() => {
+  // Debounced server-side D1 FTS5 full-text search
+  useEffect(() => {
+    const q = query.trim();
+    if (!commandPaletteOpen || !currentVaultId || !q) {
+      setFtsResults([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      notesApi
+        .search(currentVaultId, q)
+        .then((res) => setFtsResults(res.results))
+        .catch(() => {});
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [query, commandPaletteOpen, currentVaultId]);
+
+  const localMatches = useMemo(() => {
     const files = notes.filter((n) => !n.isFolder);
     const q = query.trim().toLowerCase();
     if (!q) return files.slice(0, 12);
@@ -40,10 +63,37 @@ export const CommandPalette: React.FC = () => {
         (n) =>
           n.title.toLowerCase().includes(q) ||
           n.path.toLowerCase().includes(q) ||
-          n.content.toLowerCase().includes(q)
+          (n.content ?? n.excerpt ?? '').toLowerCase().includes(q)
       )
-      .slice(0, 15);
+      .slice(0, 12);
   }, [notes, query]);
+
+  const mergedResults = useMemo(() => {
+    const q = query.trim();
+    if (!q) {
+      return localMatches.map((n) => ({
+        id: n.id,
+        title: n.title,
+        path: n.path,
+        wordCount: n.wordCount,
+        snippet: '',
+      }));
+    }
+    const map = new Map<string, SearchResult>();
+    for (const r of ftsResults) map.set(r.id, r);
+    for (const n of localMatches) {
+      if (!map.has(n.id)) {
+        map.set(n.id, {
+          id: n.id,
+          title: n.title,
+          path: n.path,
+          wordCount: n.wordCount,
+          snippet: '',
+        });
+      }
+    }
+    return Array.from(map.values()).slice(0, 15);
+  }, [query, ftsResults, localMatches]);
 
   if (!commandPaletteOpen) return null;
 
@@ -71,7 +121,7 @@ export const CommandPalette: React.FC = () => {
         </div>
 
         <div className="max-h-80 overflow-y-auto p-1.5">
-          {filtered.map((n) => (
+          {mergedResults.map((n) => (
             <button
               key={n.id}
               type="button"
@@ -81,14 +131,18 @@ export const CommandPalette: React.FC = () => {
               }}
               className="w-full flex items-center justify-between px-3 py-2 text-left rounded-xl hover:bg-[var(--accent)]/15 text-sm text-[var(--fg)] transition cursor-pointer"
             >
-              <div className="flex items-center gap-2.5 truncate">
+              <div className="flex items-center gap-2.5 truncate pr-3">
                 <FileText className="w-4 h-4 text-[var(--accent)] shrink-0" />
                 <div className="truncate">
                   <div className="font-medium truncate">{n.title}</div>
-                  <div className="text-[11px] text-[var(--muted)] truncate">{n.path}</div>
+                  <div className="text-[11px] text-[var(--muted)] truncate">
+                    {n.snippet || n.path}
+                  </div>
                 </div>
               </div>
-              <span className="text-[11px] text-[var(--muted)] shrink-0">{n.wordCount} {t.wordsUnit}</span>
+              <span className="text-[11px] text-[var(--muted)] shrink-0">
+                {n.wordCount} {t.wordsUnit}
+              </span>
             </button>
           ))}
 

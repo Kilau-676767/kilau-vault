@@ -5,6 +5,7 @@ import { vaultRoutes } from './routes/vaults';
 import { noteRoutes } from './routes/notes';
 import { graphRoutes } from './routes/graph';
 import { shareRoutes } from './routes/share';
+import { aiRoutes } from './routes/ai';
 import type { AppContext } from './types';
 
 const app = new Hono<AppContext>();
@@ -25,5 +26,6 @@ app.route('/api/vaults', vaultRoutes);
 app.route('/api/notes', noteRoutes);
 app.route('/api/graph', graphRoutes);
 app.route('/api/share', shareRoutes);
+app.route('/api/ai', aiRoutes);
 
 export default app;

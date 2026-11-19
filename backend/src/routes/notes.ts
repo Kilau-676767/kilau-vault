@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
-import { and, desc, eq, like } from 'drizzle-orm';
+import { and, desc, eq, inArray, like, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/d1';
 import { vaults, notes, noteLinks, noteRevisions } from '../db/schema';
 import { authMiddleware } from '../middleware/auth';
 import { extractSnippet, parseMarkdownMeta } from '../utils/markdown';
+import { buildFtsMatchQuery, deleteNoteFts, upsertNoteFts } from '../utils/fts';
 import type { AppContext } from '../types';
 
 export const noteRoutes = new Hono<AppContext>();
@@ -27,6 +28,15 @@ function titleFromPath(path: string, isFolder: boolean): string {
   return last;
 }
 
+async function runBatched(d1: D1Database, stmts: D1PreparedStatement[], chunkSize = 80) {
+  for (let i = 0; i < stmts.length; i += chunkSize) {
+    await d1.batch(stmts.slice(i, i + chunkSize));
+  }
+}
+
+/**
+ * Metadata-only vault listing (lazy-loads full content only when opening a note).
+ */
 noteRoutes.get('/vault/:vaultId', async (c) => {
   const userId = c.get('userId');
   const vaultId = c.req.param('vaultId');
@@ -35,8 +45,112 @@ noteRoutes.get('/vault/:vaultId', async (c) => {
   const vault = await verifyVaultOwnership(db, vaultId, userId);
   if (!vault) return c.json({ error: '知识库不存在或无权限' }, 404);
 
-  const list = await db.select().from(notes).where(eq(notes.vaultId, vaultId)).all();
+  const list = await db
+    .select({
+      id: notes.id,
+      vaultId: notes.vaultId,
+      path: notes.path,
+      title: notes.title,
+      excerpt: sql<string>`substr(${notes.content}, 1, 140)`,
+      tags: notes.tags,
+      wordCount: notes.wordCount,
+      isFolder: notes.isFolder,
+      isStarred: notes.isStarred,
+      pageRank: notes.pageRank,
+      cluster: notes.cluster,
+      createdAt: notes.createdAt,
+      updatedAt: notes.updatedAt,
+    })
+    .from(notes)
+    .where(eq(notes.vaultId, vaultId))
+    .all();
+
   return c.json({ notes: list });
+});
+
+/**
+ * Full-vault export endpoint for .zip packaging.
+ */
+noteRoutes.get('/vault/:vaultId/export', async (c) => {
+  const userId = c.get('userId');
+  const vaultId = c.req.param('vaultId');
+  const db = drizzle(c.env.DB);
+
+  const vault = await verifyVaultOwnership(db, vaultId, userId);
+  if (!vault) return c.json({ error: '知识库不存在或无权限' }, 404);
+
+  const files = await db
+    .select({ path: notes.path, content: notes.content })
+    .from(notes)
+    .where(and(eq(notes.vaultId, vaultId), eq(notes.isFolder, false)))
+    .all();
+
+  return c.json({ files });
+});
+
+/**
+ * SQLite FTS5 full-text search endpoint with LIKE fallback.
+ */
+noteRoutes.get('/vault/:vaultId/search', async (c) => {
+  const userId = c.get('userId');
+  const vaultId = c.req.param('vaultId');
+  const q = c.req.query('q')?.trim() ?? '';
+  const db = drizzle(c.env.DB);
+
+  const vault = await verifyVaultOwnership(db, vaultId, userId);
+  if (!vault) return c.json({ error: '知识库不存在或无权限' }, 404);
+  if (!q) return c.json({ results: [] });
+
+  const ftsQuery = buildFtsMatchQuery(q);
+  const matchedIds = new Set<string>();
+
+  if (ftsQuery) {
+    try {
+      const ftsRows = await c.env.DB.prepare(
+        `SELECT note_id FROM notes_fts WHERE vault_id = ? AND notes_fts MATCH ? ORDER BY bm25(notes_fts) LIMIT 25`
+      )
+        .bind(vaultId, ftsQuery)
+        .all<{ note_id: string }>();
+      for (const r of ftsRows.results) matchedIds.add(r.note_id);
+    } catch {
+      // Fallback to LIKE below if FTS syntax rejects input
+    }
+  }
+
+  // Substring fallback for CJK partial phrases
+  if (matchedIds.size < 15) {
+    const likePattern = `%${q}%`;
+    const likeRows = await c.env.DB.prepare(
+      `SELECT id FROM notes WHERE vault_id = ? AND is_folder = 0 AND (title LIKE ? OR content LIKE ?) LIMIT 25`
+    )
+      .bind(vaultId, likePattern, likePattern)
+      .all<{ id: string }>();
+    for (const r of likeRows.results) matchedIds.add(r.id);
+  }
+
+  if (matchedIds.size === 0) return c.json({ results: [] });
+
+  const rows = await db
+    .select({
+      id: notes.id,
+      title: notes.title,
+      path: notes.path,
+      wordCount: notes.wordCount,
+      content: notes.content,
+    })
+    .from(notes)
+    .where(inArray(notes.id, Array.from(matchedIds)))
+    .all();
+
+  const results = rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    path: r.path,
+    wordCount: r.wordCount,
+    snippet: extractSnippet(r.content, q, 45),
+  }));
+
+  return c.json({ results });
 });
 
 noteRoutes.get('/:id', async (c) => {
@@ -50,49 +164,57 @@ noteRoutes.get('/:id', async (c) => {
   const vault = await verifyVaultOwnership(db, note.vaultId, userId);
   if (!vault) return c.json({ error: '无权限访问' }, 403);
 
-  // Linked mentions (Backlinks)
+  // Linked mentions (Backlinks) via indexed note_links
   const incomingLinks = await db
-    .select()
+    .select({ sourceNoteId: noteLinks.sourceNoteId })
     .from(noteLinks)
     .where(and(eq(noteLinks.vaultId, note.vaultId), eq(noteLinks.targetNoteId, note.id)))
     .all();
 
-  const allVaultNotes = await db
-    .select()
-    .from(notes)
-    .where(and(eq(notes.vaultId, note.vaultId), eq(notes.isFolder, false)))
-    .all();
+  const backlinkSourceIds = Array.from(new Set(incomingLinks.map((l) => l.sourceNoteId)));
+  const backlinks = [];
 
-  const noteById = new Map(allVaultNotes.map((n) => [n.id, n]));
-  const backlinkSourceIds = new Set<string>();
-  const backlinks = incomingLinks
-    .map((l) => {
-      const src = noteById.get(l.sourceNoteId);
-      if (!src) return null;
-      backlinkSourceIds.add(src.id);
-      return {
+  if (backlinkSourceIds.length > 0) {
+    const srcNotes = await db
+      .select({
+        id: notes.id,
+        title: notes.title,
+        path: notes.path,
+        content: notes.content,
+      })
+      .from(notes)
+      .where(inArray(notes.id, backlinkSourceIds))
+      .all();
+
+    for (const src of srcNotes) {
+      backlinks.push({
         noteId: src.id,
         title: src.title,
         path: src.path,
         snippet: extractSnippet(src.content, `[[${note.title}`),
-      };
-    })
-    .filter(Boolean);
+      });
+    }
+  }
 
-  // Unlinked mentions: other notes that mention this note's title without [[...]]
+  // Unlinked mentions using SQL LIKE pushdown (bounded to 20 candidates)
   const unlinkedMentions = [];
   if (!note.isFolder && note.title.length >= 2) {
-    const lowerTitle = note.title.toLowerCase();
-    for (const other of allVaultNotes) {
-      if (other.id === note.id || backlinkSourceIds.has(other.id)) continue;
-      if (other.content.toLowerCase().includes(lowerTitle)) {
-        unlinkedMentions.push({
-          noteId: other.id,
-          title: other.title,
-          path: other.path,
-          snippet: extractSnippet(other.content, note.title),
-        });
-      }
+    const likePattern = `%${note.title}%`;
+    const candidates = await c.env.DB.prepare(
+      `SELECT id, title, path, content FROM notes WHERE vault_id = ? AND is_folder = 0 AND id != ? AND content LIKE ? LIMIT 20`
+    )
+      .bind(note.vaultId, note.id, likePattern)
+      .all<{ id: string; title: string; path: string; content: string }>();
+
+    const backlinkSet = new Set(backlinkSourceIds);
+    for (const other of candidates.results) {
+      if (backlinkSet.has(other.id)) continue;
+      unlinkedMentions.push({
+        noteId: other.id,
+        title: other.title,
+        path: other.path,
+        snippet: extractSnippet(other.content, note.title),
+      });
     }
   }
 
@@ -123,7 +245,7 @@ noteRoutes.post('/', async (c) => {
   }
 
   const existing = await db
-    .select()
+    .select({ id: notes.id })
     .from(notes)
     .where(and(eq(notes.vaultId, body.vaultId), eq(notes.path, normalizedPath)))
     .get();
@@ -151,28 +273,39 @@ noteRoutes.post('/', async (c) => {
   });
 
   if (!isFolder) {
-    // Resolve any dangling links in the vault pointing to this new title
+    await upsertNoteFts(c.env.DB, id, body.vaultId, title, content);
+
     await db
       .update(noteLinks)
       .set({ targetNoteId: id })
       .where(and(eq(noteLinks.vaultId, body.vaultId), eq(noteLinks.targetTitle, title)));
 
-    // Insert outgoing links
-    const allNotes = await db
-      .select({ id: notes.id, title: notes.title })
-      .from(notes)
-      .where(and(eq(notes.vaultId, body.vaultId), eq(notes.isFolder, false)))
-      .all();
-    const titleToId = new Map(allNotes.map((n) => [n.title, n.id]));
+    if (meta.links.length > 0) {
+      const targetNotes = await db
+        .select({ id: notes.id, title: notes.title })
+        .from(notes)
+        .where(
+          and(
+            eq(notes.vaultId, body.vaultId),
+            eq(notes.isFolder, false),
+            inArray(notes.title, meta.links)
+          )
+        )
+        .all();
+      const titleToId = new Map(targetNotes.map((n) => [n.title, n.id]));
 
-    for (const targetTitle of meta.links) {
-      await db.insert(noteLinks).values({
-        id: crypto.randomUUID(),
-        vaultId: body.vaultId,
-        sourceNoteId: id,
-        targetNoteId: titleToId.get(targetTitle) ?? null,
-        targetTitle,
-      });
+      const linkStmts = meta.links.map((targetTitle) =>
+        c.env.DB.prepare(
+          'INSERT INTO note_links (id, vault_id, source_note_id, target_note_id, target_title) VALUES (?, ?, ?, ?, ?)'
+        ).bind(
+          crypto.randomUUID(),
+          body.vaultId,
+          id,
+          titleToId.get(targetTitle) ?? null,
+          targetTitle
+        )
+      );
+      await runBatched(c.env.DB, linkStmts);
     }
   }
 
@@ -221,25 +354,25 @@ noteRoutes.put('/:id', async (c) => {
     })
     .where(eq(notes.id, noteId));
 
-  // If folder renamed, update all descendant paths
   if (existing.isFolder && newPath !== existing.path) {
     const children = await db
-      .select()
+      .select({ id: notes.id, path: notes.path })
       .from(notes)
       .where(and(eq(notes.vaultId, existing.vaultId), like(notes.path, `${existing.path}/%`)))
       .all();
-    for (const child of children) {
-      const updatedChildPath = newPath + child.path.slice(existing.path.length);
-      await db
-        .update(notes)
-        .set({ path: updatedChildPath, updatedAt: now })
-        .where(eq(notes.id, child.id));
-    }
+    const stmts = children.map((child) =>
+      c.env.DB.prepare('UPDATE notes SET path = ?, updated_at = ? WHERE id = ?').bind(
+        newPath + child.path.slice(existing.path.length),
+        now,
+        child.id
+      )
+    );
+    await runBatched(c.env.DB, stmts);
   }
 
-  // Rebuild outgoing links for this note
   if (!existing.isFolder) {
-    // Save automatic revision if content changed & > 30s since last snapshot
+    await upsertNoteFts(c.env.DB, noteId, existing.vaultId, newTitle, newContent);
+
     if (body.content !== undefined && body.content !== existing.content) {
       const latestRev = await db
         .select({ createdAt: noteRevisions.createdAt })
@@ -263,24 +396,34 @@ noteRoutes.put('/:id', async (c) => {
 
     await db.delete(noteLinks).where(eq(noteLinks.sourceNoteId, noteId));
 
-    const allNotes = await db
-      .select({ id: notes.id, title: notes.title })
-      .from(notes)
-      .where(and(eq(notes.vaultId, existing.vaultId), eq(notes.isFolder, false)))
-      .all();
-    const titleToId = new Map(allNotes.map((n) => [n.title, n.id]));
+    if (meta.links.length > 0) {
+      const targetNotes = await db
+        .select({ id: notes.id, title: notes.title })
+        .from(notes)
+        .where(
+          and(
+            eq(notes.vaultId, existing.vaultId),
+            eq(notes.isFolder, false),
+            inArray(notes.title, meta.links)
+          )
+        )
+        .all();
+      const titleToId = new Map(targetNotes.map((n) => [n.title, n.id]));
 
-    for (const targetTitle of meta.links) {
-      await db.insert(noteLinks).values({
-        id: crypto.randomUUID(),
-        vaultId: existing.vaultId,
-        sourceNoteId: noteId,
-        targetNoteId: titleToId.get(targetTitle) ?? null,
-        targetTitle,
-      });
+      const linkStmts = meta.links.map((targetTitle) =>
+        c.env.DB.prepare(
+          'INSERT INTO note_links (id, vault_id, source_note_id, target_note_id, target_title) VALUES (?, ?, ?, ?, ?)'
+        ).bind(
+          crypto.randomUUID(),
+          existing.vaultId,
+          noteId,
+          titleToId.get(targetTitle) ?? null,
+          targetTitle
+        )
+      );
+      await runBatched(c.env.DB, linkStmts);
     }
 
-    // If title changed, resolve any dangling links matching newTitle
     if (newTitle !== existing.title) {
       await db
         .update(noteLinks)
@@ -305,13 +448,43 @@ noteRoutes.delete('/:id', async (c) => {
   if (!vault) return c.json({ error: '无权限' }, 403);
 
   if (existing.isFolder) {
+    const children = await db
+      .select({ id: notes.id })
+      .from(notes)
+      .where(and(eq(notes.vaultId, existing.vaultId), like(notes.path, `${existing.path}/%`)))
+      .all();
+    const ftsDeletes = children.map((ch) =>
+      c.env.DB.prepare('DELETE FROM notes_fts WHERE note_id = ?').bind(ch.id)
+    );
+    await runBatched(c.env.DB, ftsDeletes);
     await db
       .delete(notes)
       .where(and(eq(notes.vaultId, existing.vaultId), like(notes.path, `${existing.path}/%`)));
+  } else {
+    await deleteNoteFts(c.env.DB, noteId);
   }
 
   await db.delete(notes).where(eq(notes.id, noteId));
   return c.json({ ok: true });
+});
+
+noteRoutes.patch('/:id/bookmark', async (c) => {
+  const userId = c.get('userId');
+  const noteId = c.req.param('id');
+  const body = await c.req.json<{ isStarred?: boolean }>();
+  const db = drizzle(c.env.DB);
+
+  const existing = await db.select().from(notes).where(eq(notes.id, noteId)).get();
+  if (!existing) return c.json({ error: '笔记不存在' }, 404);
+
+  const vault = await verifyVaultOwnership(db, existing.vaultId, userId);
+  if (!vault) return c.json({ error: '无权限' }, 403);
+
+  const nextStarred = body.isStarred !== undefined ? Boolean(body.isStarred) : !existing.isStarred;
+  await db.update(notes).set({ isStarred: nextStarred }).where(eq(notes.id, noteId));
+
+  const updated = await db.select().from(notes).where(eq(notes.id, noteId)).get();
+  return c.json({ note: updated });
 });
 
 // ==================== Version History & Diff ====================
@@ -388,7 +561,6 @@ noteRoutes.post('/:id/restore/:revisionId', async (c) => {
 
   const now = Date.now();
 
-  // Backup current state before restoring
   await db.insert(noteRevisions).values({
     id: crypto.randomUUID(),
     noteId: note.id,
@@ -410,30 +582,42 @@ noteRoutes.post('/:id/restore/:revisionId', async (c) => {
     })
     .where(eq(notes.id, noteId));
 
-  // Rebuild outgoing links
-  await db.delete(noteLinks).where(eq(noteLinks.sourceNoteId, noteId));
-  const allNotes = await db
-    .select({ id: notes.id, title: notes.title })
-    .from(notes)
-    .where(and(eq(notes.vaultId, note.vaultId), eq(notes.isFolder, false)))
-    .all();
-  const titleToId = new Map(allNotes.map((n) => [n.title, n.id]));
+  await upsertNoteFts(c.env.DB, noteId, note.vaultId, note.title, targetRev.content);
 
-  for (const targetTitle of meta.links) {
-    await db.insert(noteLinks).values({
-      id: crypto.randomUUID(),
-      vaultId: note.vaultId,
-      sourceNoteId: noteId,
-      targetNoteId: titleToId.get(targetTitle) ?? null,
-      targetTitle,
-    });
+  await db.delete(noteLinks).where(eq(noteLinks.sourceNoteId, noteId));
+  if (meta.links.length > 0) {
+    const targetNotes = await db
+      .select({ id: notes.id, title: notes.title })
+      .from(notes)
+      .where(
+        and(
+          eq(notes.vaultId, note.vaultId),
+          eq(notes.isFolder, false),
+          inArray(notes.title, meta.links)
+        )
+      )
+      .all();
+    const titleToId = new Map(targetNotes.map((n) => [n.title, n.id]));
+
+    const linkStmts = meta.links.map((targetTitle) =>
+      c.env.DB.prepare(
+        'INSERT INTO note_links (id, vault_id, source_note_id, target_note_id, target_title) VALUES (?, ?, ?, ?, ?)'
+      ).bind(
+        crypto.randomUUID(),
+        note.vaultId,
+        noteId,
+        titleToId.get(targetTitle) ?? null,
+        targetTitle
+      )
+    );
+    await runBatched(c.env.DB, linkStmts);
   }
 
   const updated = await db.select().from(notes).where(eq(notes.id, noteId)).get();
   return c.json({ note: updated });
 });
 
-// ==================== Batch Import Markdown Files ====================
+// ==================== Batch Import (D1 db.batch) ====================
 
 noteRoutes.post('/vault/:vaultId/import', async (c) => {
   const userId = c.get('userId');
@@ -449,38 +633,39 @@ noteRoutes.post('/vault/:vaultId/import', async (c) => {
   if (!vault) return c.json({ error: '知识库不存在或无权限' }, 404);
 
   const now = Date.now();
-  const existingNotes = await db.select().from(notes).where(eq(notes.vaultId, vaultId)).all();
+  const existingNotes = await db
+    .select({ id: notes.id, path: notes.path, title: notes.title, isFolder: notes.isFolder })
+    .from(notes)
+    .where(eq(notes.vaultId, vaultId))
+    .all();
+
   const existingByPath = new Map(existingNotes.map((n) => [n.path, n]));
+  const stmts: D1PreparedStatement[] = [];
 
   let importedCount = 0;
   let updatedCount = 0;
 
-  // 1. Ensure parent folders exist & upsert notes
   for (const file of body.files) {
     const cleanPath = file.path.trim().replace(/^\/+/, '');
     if (!cleanPath || !cleanPath.toLowerCase().endsWith('.md')) continue;
 
-    // Create parent folder entries if missing
     const parts = cleanPath.split('/').filter(Boolean);
     let folderPath = '';
     for (let i = 0; i < parts.length - 1; i++) {
       folderPath = folderPath ? `${folderPath}/${parts[i]}` : parts[i];
       if (!existingByPath.has(folderPath)) {
         const folderId = crypto.randomUUID();
-        const folderRow = {
+        stmts.push(
+          c.env.DB.prepare(
+            'INSERT INTO notes (id, vault_id, path, title, content, tags, word_count, is_folder, is_starred, page_rank, cluster, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 0, 0, ?, ?)'
+          ).bind(folderId, vaultId, folderPath, parts[i], '', '[]', 0, now, now)
+        );
+        existingByPath.set(folderPath, {
           id: folderId,
-          vaultId,
           path: folderPath,
           title: parts[i],
-          content: '',
-          tags: '[]',
-          wordCount: 0,
           isFolder: true,
-          createdAt: now,
-          updatedAt: now,
-        };
-        await db.insert(notes).values(folderRow);
-        existingByPath.set(folderPath, folderRow);
+        });
       }
     }
 
@@ -489,60 +674,72 @@ noteRoutes.post('/vault/:vaultId/import', async (c) => {
     const prev = existingByPath.get(cleanPath);
 
     if (prev && !prev.isFolder) {
-      await db
-        .update(notes)
-        .set({
-          content: file.content,
-          tags: JSON.stringify(meta.tags),
-          wordCount: meta.wordCount,
-          updatedAt: now,
-        })
-        .where(eq(notes.id, prev.id));
+      stmts.push(
+        c.env.DB.prepare(
+          'UPDATE notes SET content = ?, tags = ?, word_count = ?, updated_at = ? WHERE id = ?'
+        ).bind(file.content, JSON.stringify(meta.tags), meta.wordCount, now, prev.id),
+        c.env.DB.prepare('DELETE FROM notes_fts WHERE note_id = ?').bind(prev.id),
+        c.env.DB.prepare(
+          'INSERT INTO notes_fts (note_id, vault_id, title, content) VALUES (?, ?, ?, ?)'
+        ).bind(prev.id, vaultId, title, file.content)
+      );
       updatedCount += 1;
     } else if (!prev) {
       const id = crypto.randomUUID();
-      const newNote = {
-        id,
-        vaultId,
-        path: cleanPath,
-        title,
-        content: file.content,
-        tags: JSON.stringify(meta.tags),
-        wordCount: meta.wordCount,
-        isFolder: false,
-        createdAt: now,
-        updatedAt: now,
-      };
-      await db.insert(notes).values(newNote);
-      existingByPath.set(cleanPath, newNote);
+      stmts.push(
+        c.env.DB.prepare(
+          'INSERT INTO notes (id, vault_id, path, title, content, tags, word_count, is_folder, is_starred, page_rank, cluster, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, ?, ?)'
+        ).bind(
+          id,
+          vaultId,
+          cleanPath,
+          title,
+          file.content,
+          JSON.stringify(meta.tags),
+          meta.wordCount,
+          now,
+          now
+        ),
+        c.env.DB.prepare(
+          'INSERT INTO notes_fts (note_id, vault_id, title, content) VALUES (?, ?, ?, ?)'
+        ).bind(id, vaultId, title, file.content)
+      );
+      existingByPath.set(cleanPath, { id, path: cleanPath, title, isFolder: false });
       importedCount += 1;
     }
   }
 
-  // 2. Rebuild all noteLinks in this vault so cross-references resolve cleanly
+  await runBatched(c.env.DB, stmts);
+
+  // Rebuild all noteLinks in vault via batch
   await db.delete(noteLinks).where(eq(noteLinks.vaultId, vaultId));
   const allVaultFiles = await db
-    .select()
+    .select({ id: notes.id, title: notes.title, content: notes.content })
     .from(notes)
     .where(and(eq(notes.vaultId, vaultId), eq(notes.isFolder, false)))
     .all();
 
   const titleToId = new Map(allVaultFiles.map((n) => [n.title, n.id]));
-  let linkCount = 0;
+  const linkStmts: D1PreparedStatement[] = [];
 
   for (const n of allVaultFiles) {
     const meta = parseMarkdownMeta(n.content);
     for (const targetTitle of meta.links) {
-      await db.insert(noteLinks).values({
-        id: crypto.randomUUID(),
-        vaultId,
-        sourceNoteId: n.id,
-        targetNoteId: titleToId.get(targetTitle) ?? null,
-        targetTitle,
-      });
-      linkCount += 1;
+      linkStmts.push(
+        c.env.DB.prepare(
+          'INSERT INTO note_links (id, vault_id, source_note_id, target_note_id, target_title) VALUES (?, ?, ?, ?, ?)'
+        ).bind(
+          crypto.randomUUID(),
+          vaultId,
+          n.id,
+          titleToId.get(targetTitle) ?? null,
+          targetTitle
+        )
+      );
     }
   }
 
-  return c.json({ importedCount, updatedCount, linkCount });
+  await runBatched(c.env.DB, linkStmts);
+
+  return c.json({ importedCount, updatedCount, linkCount: linkStmts.length });
 });

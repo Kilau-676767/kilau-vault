@@ -55,7 +55,7 @@ export const BacklinksPanel: React.FC = () => {
   );
 
   const headings = useMemo(() => {
-    if (!activeNote) return [];
+    if (!activeNote?.content) return [];
     const lines = activeNote.content.split('\n');
     const result: { level: number; text: string }[] = [];
     for (const line of lines) {
@@ -69,13 +69,16 @@ export const BacklinksPanel: React.FC = () => {
 
   const handleConvertToLink = async (sourceNoteId: string) => {
     if (!activeNote) return;
-    const sourceNote = notes.find((n) => n.id === sourceNoteId);
-    if (!sourceNote) return;
+    let sourceContent = notes.find((n) => n.id === sourceNoteId)?.content;
+    if (sourceContent === undefined) {
+      const detail = await notesApi.getDetail(sourceNoteId);
+      sourceContent = detail.note.content ?? '';
+    }
 
     const escaped = activeNote.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const regex = new RegExp(`(?<!\\[\\[)${escaped}(?!\\]\\])`, 'i');
-    const newContent = sourceNote.content.replace(regex, `[[${activeNote.title}]]`);
-    if (newContent !== sourceNote.content) {
+    const newContent = sourceContent.replace(regex, `[[${activeNote.title}]]`);
+    if (newContent !== sourceContent) {
       await notesApi.update(sourceNoteId, { content: newContent });
       await refreshBacklinks(activeNote.id);
     }
@@ -274,7 +277,7 @@ export const BacklinksPanel: React.FC = () => {
       {selectedRevision && (
         <VersionDiffModal
           noteTitle={activeNote.title}
-          currentContent={activeNote.content}
+          currentContent={activeNote.content ?? ''}
           revision={selectedRevision}
           onRestore={async (revId) => {
             await restoreNoteRevision(activeNote.id, revId);

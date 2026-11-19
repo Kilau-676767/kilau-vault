@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Bookmark,
   ChevronDown,
   ChevronRight,
   FilePlus,
@@ -7,7 +8,6 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
-  Hash,
   Pencil,
   Trash2,
   Upload,
@@ -67,12 +67,14 @@ function buildTree(notes: Note[]): TreeNode[] {
 }
 
 export const FileTree: React.FC = () => {
-  const { notes, activeNoteId, openNote, createNote, deleteNote, renameNote } = useAppStore();
+  const { notes, activeNoteId, openNote, createNote, deleteNote, renameNote, toggleBookmark } =
+    useAppStore();
   const { t } = useT();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     方法论: true,
     技术原理: true,
   });
+  const [bookmarksOpen, setBookmarksOpen] = useState(true);
   const [creating, setCreating] = useState<{ isFolder: boolean; parentPath: string } | null>(null);
   const [newName, setNewName] = useState('');
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -80,22 +82,10 @@ export const FileTree: React.FC = () => {
   const [importOpen, setImportOpen] = useState(false);
 
   const tree = useMemo(() => buildTree(notes), [notes]);
-
-  const allTags = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const n of notes) {
-      if (n.isFolder) continue;
-      try {
-        const parsed: string[] = JSON.parse(n.tags);
-        for (const t of parsed) {
-          counts.set(t, (counts.get(t) ?? 0) + 1);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-  }, [notes]);
+  const bookmarkedNotes = useMemo(
+    () => notes.filter((n) => !n.isFolder && n.isStarred),
+    [notes]
+  );
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -222,7 +212,25 @@ export const FileTree: React.FC = () => {
           <div className="hidden group-hover:flex items-center gap-1">
             <button
               type="button"
-              title="重命名"
+              data-tip={node.note.isStarred ? '取消书签' : '加入书签'}
+              onClick={(e) => {
+                e.stopPropagation();
+                void toggleBookmark(node.note!.id);
+              }}
+              className={`p-0.5 ${
+                node.note.isStarred
+                  ? 'text-[var(--ochre)]'
+                  : 'text-[var(--muted)] hover:text-[var(--ochre)]'
+              }`}
+            >
+              <Bookmark
+                className="w-3 h-3"
+                fill={node.note.isStarred ? 'currentColor' : 'none'}
+              />
+            </button>
+            <button
+              type="button"
+              data-tip="重命名"
               onClick={(e) => {
                 e.stopPropagation();
                 setRenamingId(node.note!.id);
@@ -234,7 +242,7 @@ export const FileTree: React.FC = () => {
             </button>
             <button
               type="button"
-              title="删除"
+              data-tip="删除"
               onClick={(e) => {
                 e.stopPropagation();
                 if (confirm(`确定删除笔记「${node.name}」吗？`)) {
@@ -309,6 +317,55 @@ export const FileTree: React.FC = () => {
         </form>
       )}
 
+      {/* Bookmarks Section */}
+      {bookmarkedNotes.length > 0 && (
+        <div className="border-b border-[var(--border)] px-2 py-2 bg-[var(--surface-raised)]/40">
+          <button
+            type="button"
+            onClick={() => setBookmarksOpen((v) => !v)}
+            className="w-full flex items-center justify-between px-1 py-0.5 text-[11px] font-semibold uppercase tracking-widest text-[var(--ochre)] cursor-pointer"
+          >
+            <span className="flex items-center gap-1.5">
+              <Bookmark className="w-3 h-3" fill="currentColor" />
+              书签收藏 ({bookmarkedNotes.length})
+            </span>
+            {bookmarksOpen ? (
+              <ChevronDown className="w-3 h-3" />
+            ) : (
+              <ChevronRight className="w-3 h-3" />
+            )}
+          </button>
+          {bookmarksOpen && (
+            <div className="mt-1 space-y-0.5 max-h-36 overflow-y-auto">
+              {bookmarkedNotes.map((bn) => (
+                <div
+                  key={bn.id}
+                  onClick={() => void openNote(bn.id)}
+                  className={`group flex items-center justify-between px-2 py-1 text-xs rounded-lg cursor-pointer transition ${
+                    bn.id === activeNoteId
+                      ? 'bg-[var(--ochre)]/15 text-[var(--ochre)] font-medium'
+                      : 'text-[var(--fg)] hover:bg-[var(--surface-muted)]'
+                  }`}
+                >
+                  <span className="truncate">{bn.title}</span>
+                  <button
+                    type="button"
+                    data-tip="移出书签"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void toggleBookmark(bn.id);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 text-[var(--muted)] hover:text-[var(--ochre)] cursor-pointer"
+                  >
+                    <Bookmark className="w-3 h-3" fill="currentColor" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* File Tree */}
       <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
         {tree.length === 0 ? (
@@ -319,27 +376,6 @@ export const FileTree: React.FC = () => {
           tree.map((node) => renderNode(node))
         )}
       </div>
-
-      {/* Tags Section */}
-      {allTags.length > 0 && (
-        <div className="border-t border-[var(--border)] p-3 max-h-44 overflow-y-auto">
-          <div className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted)] mb-2">
-            {t.tagsTitle} ({allTags.length})
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {allTags.map(([tag, count]) => (
-              <span
-                key={tag}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-[var(--surface-raised)] text-[var(--sage)] border border-[var(--border)]"
-              >
-                <Hash className="w-3 h-3 opacity-75" />
-                {tag}
-                <span className="text-[10px] text-[var(--muted)]">{count}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
 
       {importOpen && <ImportModal onClose={() => setImportOpen(false)} />}
     </div>

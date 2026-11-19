@@ -44,6 +44,21 @@ graphRoutes.get('/vault/:vaultId', async (c) => {
     .all();
 
   const result = analyzeKnowledgeGraph(vaultNotes, vaultLinks);
+
+  // Cache computed PageRank & Cluster back to notes table in batch
+  if (result.nodes.length > 0) {
+    const stmts = result.nodes.map((n) =>
+      c.env.DB.prepare('UPDATE notes SET page_rank = ?, cluster = ? WHERE id = ?').bind(
+        n.pageRank,
+        n.cluster,
+        n.id
+      )
+    );
+    for (let i = 0; i < stmts.length; i += 80) {
+      await c.env.DB.batch(stmts.slice(i, i + 80));
+    }
+  }
+
   return c.json(result);
 });
 
