@@ -18,7 +18,7 @@
 ```bash
 cd backend
 npm install
-npx wrangler d1 migrations apply web_obsidian_db --local --yes
+npx wrangler d1 migrations apply kilau_vault_db --local
 npm run dev
 # 后端运行在 http://127.0.0.1:8787
 ```
@@ -39,9 +39,9 @@ npm run dev
    ```bash
    cd backend
    npx wrangler login
-   npx wrangler d1 create web_obsidian_db
+   npx wrangler d1 create kilau_vault_db
    # 将输出的 database_id 填入 backend/wrangler.toml
-   npx wrangler d1 migrations apply web_obsidian_db --remote --yes
+   npx wrangler d1 migrations apply kilau_vault_db --remote
    npm run deploy
    ```
 2. **部署前端到 Cloudflare Pages**：

@@ -17,7 +17,7 @@ import type {
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
 function getToken(): string | null {
-  return localStorage.getItem('obs_token');
+  return localStorage.getItem('kilau_vault_token');
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {

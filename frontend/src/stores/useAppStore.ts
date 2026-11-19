@@ -68,7 +68,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setEditorMode: (mode) => set({ editorMode: mode }),
 
   checkAuth: async () => {
-    const token = localStorage.getItem('obs_token');
+    const token = localStorage.getItem('kilau_vault_token');
     if (!token) {
       set({ user: null, authChecked: true });
       return;
@@ -78,13 +78,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ user, authChecked: true });
       await get().loadVaults();
     } catch {
-      localStorage.removeItem('obs_token');
+      localStorage.removeItem('kilau_vault_token');
       set({ user: null, authChecked: true });
     }
   },
 
   setAuth: async (token, user) => {
-    localStorage.setItem('obs_token', token);
+    localStorage.setItem('kilau_vault_token', token);
     set({ user, authChecked: true });
     await get().loadVaults();
   },
@@ -92,7 +92,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setUser: (user) => set({ user }),
 
   logout: () => {
-    localStorage.removeItem('obs_token');
+    localStorage.removeItem('kilau_vault_token');
     set({
       user: null,
       vaults: [],
